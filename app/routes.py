@@ -487,3 +487,18 @@ def delete_user(user_id):
     db.session.commit()
 
     return jsonify({'message': 'User deleted successfully'})
+
+
+@bp.route('/me', methods=['GET'])
+@jwt_required()
+def get_me():
+    # Get the ID from the currently logged-in user's token
+    current_user_id = int(get_jwt_identity())
+    user = Users.query.get_or_404(current_user_id)
+    
+    # Return key information about the user and their company
+    return jsonify({
+        'email': user.email,
+        'role': user.role,
+        'company_currency': user.company.default_currency
+    })
