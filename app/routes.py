@@ -1,5 +1,5 @@
 # In app/routes.py
-
+import requests
 from flask import request, jsonify, Blueprint
 from app import db
 from app.models import Users, Company, ApprovalRule, ApprovalStep
@@ -12,22 +12,44 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 def register():
     # 1. Get data from the incoming request
     data = request.get_json()
-    if not data or not data.get('email') or not data.get('password') or not data.get('company_name'):
+    # Add country_code to the validation
+    if not all(k in data for k in ['email', 'password', 'company_name', 'country_code']):
         return jsonify({'message': 'Missing required fields'}), 400
 
     # 2. Check if the user already exists
     if Users.query.filter_by(email=data['email']).first():
         return jsonify({'message': 'User with this email already exists'}), 409
 
-    # 3. Create a new Company
+    # --- NEW LOGIC TO GET CURRENCY ---
+    currency_code = 'USD' # Default currency
+    try:
+        # Call the external API to get country data
+        country_code = data['country_code']
+        response = requests.get(f'https://restcountries.com/v3.1/alpha/{country_code}')
+        response.raise_for_status() # Raise an exception for bad status codes
+        
+        country_data = response.json()
+        # Extract the first currency code (e.g., 'INR', 'EUR')
+        currency_code = list(country_data[0]['currencies'].keys())[0]
+
+    except requests.exceptions.RequestException as e:
+        # If the API call fails, we can log the error and use the default
+        print(f"Could not fetch currency for {country_code}: {e}")
+    except (KeyError, IndexError):
+        # If the API response format is unexpected
+        print(f"Could not parse currency from API response for {country_code}")
+    # ------------------------------------
+
+    # 3. Create a new Company with the fetched currency
     new_company = Company(
         name=data['company_name'],
-        default_currency='USD' 
+        default_currency=currency_code
     )
     db.session.add(new_company)
     db.session.commit()
 
     # 4. Create a new User (as Admin) and link to the company
+    # (The rest of the function remains the same)
     new_user = Users(
         email=data['email'],
         role='Admin',
@@ -35,11 +57,9 @@ def register():
     )
     new_user.set_password(data['password'])
 
-    # 5. Add to database and save
     db.session.add(new_user)
     db.session.commit()
 
-    # 6. Return a success response
     return jsonify({'message': 'Admin user registered successfully'}), 201
 
 
@@ -295,3 +315,89 @@ def reject_expense(approval_id):
 
     db.session.commit()
     return jsonify({'message': 'Expense rejected'})
+
+@bp.route('/expenses/my-history', methods=['GET'])
+@jwt_required()
+def get_my_expense_history():
+    # 1. Identify the logged-in user
+    current_user_id = int(get_jwt_identity())
+    
+    # 2. Query for all expenses submitted by this user
+    expenses = Expense.query.filter_by(employee_id=current_user_id).order_by(Expense.created_at.desc()).all()
+    
+    # 3. Format the data for the response
+    results = []
+    for expense in expenses:
+        results.append({
+            'expense_id': expense.id,
+            'category': expense.category,
+            'amount': str(expense.amount),
+            'currency': expense.currency,
+            'status': expense.status,
+            'submitted_at': expense.created_at.isoformat()
+        })
+        
+    return jsonify(results)
+
+# In app/routes.py
+
+# ... (all your other routes and imports are here) ...
+
+@bp.route('/users', methods=['GET'])
+@jwt_required() # Ensures a user is logged in
+def get_users():
+    # Step 1: Get the ID of the logged-in user from the JWT
+    current_user_id = int(get_jwt_identity())
+    
+    # Step 2: Fetch that user from the database to check their role
+    admin_user = Users.query.get_or_404(current_user_id)
+    
+    # Step 3: Authorize the user. Make sure they are an Admin.
+    if admin_user.role != 'Admin':
+        return jsonify({'message': 'Admin access required'}), 403 # 403 Forbidden
+
+    # Step 4: Query the database for all users in the same company
+    users_in_company = Users.query.filter_by(company_id=admin_user.company_id).all()
+
+    # Step 5: Format the user data into a JSON-friendly list of dictionaries
+    user_list = []
+    for user in users_in_company:
+        user_list.append({
+            'id': user.id,
+            'email': user.email,
+            'role': user.role,
+            'manager_id': user.manager_id
+        })
+
+    # Step 6: Return the list as a JSON response
+    return jsonify(user_list)
+
+@bp.route('/users/<int:user_id>', methods=['PUT'])
+@jwt_required()
+def update_user(user_id):
+    # 1. Identify the logged-in user and ensure they are an Admin
+    current_user_id = int(get_jwt_identity())
+    admin_user = Users.query.get_or_404(current_user_id)
+    if admin_user.role != 'Admin':
+        return jsonify({'message': 'Admin access required'}), 403
+
+    # 2. Find the user to be updated
+    user_to_update = Users.query.get_or_404(user_id)
+
+    # 3. Security check: Ensure the admin is editing a user in their own company
+    if user_to_update.company_id != admin_user.company_id:
+        return jsonify({'message': 'Not authorized to edit this user'}), 403
+
+    # 4. Get the new data from the request body
+    data = request.get_json()
+
+    # 5. Update the user's fields if new data is provided
+    if 'role' in data:
+        user_to_update.role = data['role']
+    if 'manager_id' in data:
+        user_to_update.manager_id = data['manager_id']
+
+    # 6. Save the changes to the database
+    db.session.commit()
+
+    return jsonify({'message': 'User updated successfully'})
