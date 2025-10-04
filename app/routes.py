@@ -502,3 +502,66 @@ def get_me():
         'role': user.role,
         'company_currency': user.company.default_currency
     })
+
+
+@bp.route('/expenses/all', methods=['GET'])
+@jwt_required()
+def get_all_expenses():
+    # 1. Verify user is an Admin
+    admin_id = int(get_jwt_identity())
+    admin = Users.query.get_or_404(admin_id)
+    if admin.role != 'Admin':
+        return jsonify({'message': 'Admin access required'}), 403
+
+    # 2. Get all expenses for the admin's company
+    all_expenses = db.session.query(Expense).join(Users).filter(Users.company_id == admin.company_id).order_by(Expense.created_at.desc()).all()
+    
+    # 3. Format the results with the smart status
+    results = []
+    for expense in all_expenses:
+        status_display = expense.status
+        if expense.status == 'Pending':
+            pending_approval = ExpenseApproval.query.filter_by(expense_id=expense.id, status='Pending').first()
+            if pending_approval:
+                status_display = f"Pending {pending_approval.step.approver_role} Approval"
+        
+        results.append({
+            'expense_id': expense.id,
+            'employee_email': expense.employee.email,
+            'category': expense.category,
+            'amount': str(expense.amount),
+            'currency': expense.currency,
+            'status': status_display
+        })
+    return jsonify(results)
+
+
+@bp.route('/expenses/<int:expense_id>/override', methods=['POST'])
+@jwt_required()
+def override_expense(expense_id):
+    # 1. Verify user is an Admin
+    admin_id = int(get_jwt_identity())
+    admin = Users.query.get_or_404(admin_id)
+    if admin.role != 'Admin':
+        return jsonify({'message': 'Admin access required'}), 403
+
+    # 2. Get the override action ('approve' or 'reject') from the request body
+    data = request.get_json()
+    action = data.get('action')
+    if action not in ['approve', 'reject']:
+        return jsonify({'message': 'Invalid action specified'}), 400
+
+    # 3. Find the expense and verify it belongs to the admin's company
+    expense_to_update = Expense.query.get_or_404(expense_id)
+    if expense_to_update.employee.company_id != admin.company_id:
+        return jsonify({'message': 'Not authorized for this expense'}), 403
+
+    # 4. Update the expense status
+    new_status = 'Approved' if action == 'approve' else 'Rejected'
+    expense_to_update.status = new_status
+
+    # 5. Cancel any pending approval steps for this expense
+    ExpenseApproval.query.filter_by(expense_id=expense_id, status='Pending').delete()
+    
+    db.session.commit()
+    return jsonify({'message': f'Expense status has been overridden to {new_status}'})
