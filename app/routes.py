@@ -80,9 +80,12 @@ def login():
     if not user or not user.check_password(password):
         return jsonify({'message': 'Invalid credentials'}), 401
 
-    # 4. Create and return a new access token (JWT)
+    # 4. Create token and get the user's role from the database
     access_token = create_access_token(identity=str(user.id))
-    return jsonify(access_token=access_token)
+    user_role = user.role 
+    
+    # 5. Return both the token and the role in the response
+    return jsonify(access_token=access_token, role=user_role)
 
 
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -90,10 +93,10 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 
 @bp.route('/users', methods=['POST'])
-@jwt_required() # This decorator protects the route
+@jwt_required()
 def create_user():
     # 1. Get the ID of the user from the access token
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())
     admin_user = Users.query.get(current_user_id)
 
     # 2. Authorization Check: Ensure the user is an Admin
@@ -104,20 +107,29 @@ def create_user():
     data = request.get_json()
     if not data or not data.get('email') or not data.get('password') or not data.get('role'):
         return jsonify({'message': 'Missing required fields'}), 400
-
-    # 4. Check if user already exists
+    
+    # --- NEW VALIDATION FOR CFO ---
+    # 4. If the new user's role is CFO, check if one already exists
+    if data['role'] == 'CFO':
+        existing_cfo = Users.query.filter_by(company_id=admin_user.company_id, role='CFO').first()
+        if existing_cfo:
+            # If a CFO is found, return an error and stop.
+            return jsonify({'message': 'Cannot add more than one CFO'}), 409 # 409 is the "Conflict" status code
+    # ------------------------------------
+    
+    # 5. Check if user email already exists
     if Users.query.filter_by(email=data['email']).first():
         return jsonify({'message': 'User with this email already exists'}), 409
 
-    # 5. Create the new user
+    # 6. Create the new user
     new_user = Users(
         email=data['email'],
-        role=data['role'], # Should be 'Employee' or 'Manager'
-        company_id=admin_user.company_id # Assign to the same company as the admin
+        role=data['role'],
+        company_id=admin_user.company_id
     )
     new_user.set_password(data['password'])
 
-    # 6. Save to the database
+    # 7. Save to the database
     db.session.add(new_user)
     db.session.commit()
 
@@ -218,31 +230,33 @@ def create_approval_rule():
 @bp.route('/approvals/pending', methods=['GET'])
 @jwt_required()
 def get_pending_approvals():
-    # 1. Identify the logged-in user and ensure they are a Manager
+    # 1. Identify the logged-in user and their role
     current_user_id = int(get_jwt_identity())
-    manager = Users.query.get(current_user_id)
-    if manager.role != 'Manager':
-        return jsonify({'message': 'Manager access required'}), 403
+    approver = Users.query.get_or_404(current_user_id)
+    user_role = approver.role # This could be 'Manager', 'Finance', etc.
 
-    # 2. Find all 'Pending' approval requests assigned to this manager's direct reports
-    # This query joins across five tables to find the correct expenses.
-    pending_approvals = db.session.query(ExpenseApproval).join(Expense).join(Users, Expense.employee_id == Users.id).join(ApprovalStep).filter(
-        Users.manager_id == manager.id,
-        ApprovalStep.approver_role == 'Manager',
+    # 2. Find all 'Pending' approval requests that match the user's role
+    # This query is now simpler and works for any role!
+    pending_approvals = db.session.query(ExpenseApproval).join(ApprovalStep).filter(
+        ApprovalStep.approver_role == user_role,
         ExpenseApproval.status == 'Pending'
     ).all()
 
-    # 3. Format the data for a clean response
+    # 3. Format the data for a clean response (this part remains the same)
     results = []
+    for approval in pending_approvals:
+        employee = Users.query.get(approval.expense.employee_id)
+        results = []
     for approval in pending_approvals:
         employee = Users.query.get(approval.expense.employee_id)
         results.append({
             'approval_id': approval.id,
             'expense_id': approval.expense.id,
-            'employee_name': employee.email, # Or a name field if you add one
+            'employee_name': employee.email,
             'category': approval.expense.category,
-            'amount': str(approval.expense.amount), # Convert Decimal to string for JSON
+            'amount': str(approval.expense.amount),
             'currency': approval.expense.currency,
+            'description': approval.expense.description, # <-- ADD THIS LINE
             'expense_date': approval.expense.expense_date.isoformat(),
             'submitted_at': approval.expense.created_at.isoformat()
         })
@@ -251,35 +265,36 @@ def get_pending_approvals():
 
 # ... (all your other routes are here) ...
 
+# In app/routes.py
+
 @bp.route('/approvals/<int:approval_id>/approve', methods=['POST'])
 @jwt_required()
 def approve_expense(approval_id):
-    # 1. Identify the manager
-    manager_id = int(get_jwt_identity())
-    manager = Users.query.get(manager_id)
-    if manager.role != 'Manager':
-        return jsonify({'message': 'Manager access required'}), 403
+    # 1. Identify the current user (the approver)
+    approver_id = int(get_jwt_identity())
+    approver = Users.query.get_or_404(approver_id)
 
     # 2. Find the specific approval record
     approval = ExpenseApproval.query.get_or_404(approval_id)
 
-    # Security Check: Ensure this manager is authorized to approve this request
-    if approval.expense.employee.manager_id != manager.id:
-        return jsonify({'message': 'You are not authorized to approve this expense'}), 403
+    # --- NEW, MORE FLEXIBLE SECURITY CHECK ---
+    # 3. Check if the approver's role matches the role required for this step
+    if approver.role != approval.step.approver_role:
+        return jsonify({'message': f'This expense requires approval from the {approval.step.approver_role}'}), 403
+    # ---------------------------------------------
 
-    # 3. Update the current approval step
+    # 4. Update the current approval step
     approval.status = 'Approved'
-    approval.approver_id = manager.id
+    approval.approver_id = approver.id
     approval.comments = request.json.get('comments')
 
-    # --- Core Workflow Logic ---
-    # 4. Check if there's a next step in the rule
+    # 5. Check if there's a next step in the rule
     current_step = approval.step
     rule = current_step.rule
     next_step = ApprovalStep.query.filter_by(rule_id=rule.id, step_number=current_step.step_number + 1).first()
 
     if next_step:
-        # 5a. If there is a next step, create a new pending approval for it
+        # If there is a next step, create a new pending approval for it
         new_approval = ExpenseApproval(
             expense_id=approval.expense_id,
             step_id=next_step.id,
@@ -287,7 +302,7 @@ def approve_expense(approval_id):
         )
         db.session.add(new_approval)
     else:
-        # 5b. If this is the final step, approve the whole expense
+        # If this is the final step, approve the whole expense
         approval.expense.status = 'Approved'
 
     db.session.commit()
@@ -297,21 +312,22 @@ def approve_expense(approval_id):
 @bp.route('/approvals/<int:approval_id>/reject', methods=['POST'])
 @jwt_required()
 def reject_expense(approval_id):
-    # 1. Identify the manager and perform security checks
-    manager_id = int(get_jwt_identity())
-    manager = Users.query.get(manager_id)
-    if manager.role != 'Manager':
-        return jsonify({'message': 'Manager access required'}), 403
-
+    # 1. Identify the approver
+    approver_id = int(get_jwt_identity())
+    approver = Users.query.get_or_404(approver_id)
+    
     approval = ExpenseApproval.query.get_or_404(approval_id)
-    if approval.expense.employee.manager_id != manager.id:
-        return jsonify({'message': 'You are not authorized to reject this expense'}), 403
+    
+    # --- APPLY THE SAME FLEXIBLE SECURITY CHECK HERE ---
+    if approver.role != approval.step.approver_role:
+        return jsonify({'message': f'You are not authorized to reject this expense'}), 403
+    # ----------------------------------------------------
     
     # 2. Update records to rejected
     approval.status = 'Rejected'
-    approval.approver_id = manager.id
+    approval.approver_id = approver.id
     approval.comments = request.json.get('comments')
-    approval.expense.status = 'Rejected' # Rejection stops the entire workflow
+    approval.expense.status = 'Rejected'
 
     db.session.commit()
     return jsonify({'message': 'Expense rejected'})
@@ -319,21 +335,24 @@ def reject_expense(approval_id):
 @bp.route('/expenses/my-history', methods=['GET'])
 @jwt_required()
 def get_my_expense_history():
-    # 1. Identify the logged-in user
     current_user_id = int(get_jwt_identity())
-    
-    # 2. Query for all expenses submitted by this user
     expenses = Expense.query.filter_by(employee_id=current_user_id).order_by(Expense.created_at.desc()).all()
     
-    # 3. Format the data for the response
     results = []
     for expense in expenses:
+        status_display = expense.status
+        # If the overall status is pending, find out the current step
+        if expense.status == 'Pending':
+            pending_approval = ExpenseApproval.query.filter_by(expense_id=expense.id, status='Pending').first()
+            if pending_approval:
+                status_display = f"Pending {pending_approval.step.approver_role} Approval"
+
         results.append({
             'expense_id': expense.id,
             'category': expense.category,
             'amount': str(expense.amount),
             'currency': expense.currency,
-            'status': expense.status,
+            'status': status_display, # Use the new, smarter status
             'submitted_at': expense.created_at.isoformat()
         })
         
@@ -401,3 +420,70 @@ def update_user(user_id):
     db.session.commit()
 
     return jsonify({'message': 'User updated successfully'})
+
+@bp.route('/team/expenses', methods=['GET'])
+@jwt_required()
+def get_team_expense_history():
+    # 1. Get the logged-in user
+    current_user_id = int(get_jwt_identity())
+    current_user = Users.query.get_or_404(current_user_id)
+    
+    # 2. Authorization check: user must be a Manager or CFO
+    if current_user.role not in ['Manager', 'CFO']:
+        return jsonify({'message': 'Access for Managers or CFO only'}), 403
+
+    # 3. Fetch expenses based on the user's role
+    team_expenses = []
+    if current_user.role == 'Manager':
+        # If user is a Manager, get their direct reports' expenses
+        employee_ids = [user.id for user in Users.query.filter_by(manager_id=current_user.id).all()]
+        if employee_ids:
+            team_expenses = Expense.query.filter(Expense.employee_id.in_(employee_ids)).order_by(Expense.created_at.desc()).all()
+    
+    elif current_user.role == 'CFO':
+        # If user is a CFO, get ALL expenses for the whole company
+        company_id = current_user.company_id
+        team_expenses = db.session.query(Expense).join(Users).filter(Users.company_id == company_id).order_by(Expense.created_at.desc()).all()
+    
+    # 4. Format the results (this part is the same)
+    results = []
+    for expense in team_expenses:
+        status_display = expense.status
+        if expense.status == 'Pending':
+            pending_approval = ExpenseApproval.query.filter_by(expense_id=expense.id, status='Pending').first()
+            if pending_approval:
+                status_display = f"Pending {pending_approval.step.approver_role} Approval"
+        
+        results.append({
+            'employee_email': expense.employee.email,
+            'expense_date': expense.expense_date.isoformat(),
+            'category': expense.category,
+            'amount': str(expense.amount),
+            'currency': expense.currency,
+            'status': status_display
+        })
+    return jsonify(results)
+
+@bp.route('/users/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def delete_user(user_id):
+    # 1. Ensure the current user is an Admin
+    current_user_id = int(get_jwt_identity())
+    admin_user = Users.query.get_or_404(current_user_id)
+    if admin_user.role != 'Admin':
+        return jsonify({'message': 'Admin access required'}), 403
+
+    # 2. Find the user to be deleted
+    user_to_delete = Users.query.get_or_404(user_id)
+
+    # 3. Security checks
+    if user_to_delete.company_id != admin_user.company_id:
+        return jsonify({'message': 'Not authorized to delete this user'}), 403
+    if user_to_delete.id == admin_user.id:
+        return jsonify({'message': 'Admin cannot delete themselves'}), 400
+
+    # 4. Delete the user
+    db.session.delete(user_to_delete)
+    db.session.commit()
+
+    return jsonify({'message': 'User deleted successfully'})

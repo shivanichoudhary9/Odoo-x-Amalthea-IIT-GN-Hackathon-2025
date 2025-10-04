@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Dashboard - ExpenseFlow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .bg-pending { background-color: #fef3c7; color: #b45309; }
+        .bg-approved { background-color: #d1fae5; color: #065f46; }
+        .bg-rejected { background-color: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body class="font-sans bg-gray-50">
+
+    <div id="app">
+        <header class="bg-white shadow-md p-4 sticky top-0 z-10 flex justify-between items-center">
+            <a href="#" onclick="setActiveTab('submit'); return false;">
+                <h1 class="text-2xl font-bold text-purple-700 hover:text-purple-900 transition">ExpenseFlow</h1>
+            </a>
+            <div class="flex items-center space-x-4">
+                <div id="user-info" class="text-sm text-gray-600">Employee User: ...</div>
+                <a href="#" id="logout-button" class="text-sm text-red-500 hover:text-red-700 font-medium transition">
+                    Logout
+                </a>
+            </div>
+        </header>
+        
+        <div class="bg-white border-b sticky top-16 z-10 shadow-sm">
+            <div class="max-w-4xl mx-auto flex">
+                <button onclick="setActiveTab('submit')" id="tab-submit" class="px-6 py-3 border-b-2 font-medium transition border-purple-600 text-purple-600">
+                    Submit Expense
+                </button>
+                <button onclick="setActiveTab('history')" id="tab-history" class="px-6 py-3 border-b-2 font-medium transition border-transparent text-gray-500 hover:text-gray-700">
+                    View History
+                </button>
+            </div>
+        </div>
+
+        <main class="p-8">
+            <div id="content-submit" class="tab-content-item">
+                <div class="max-w-xl mx-auto p-6 bg-white shadow-xl rounded-2xl">
+                    <h2 class="text-2xl font-bold mb-6 text-gray-800">Submit New Expense Claim</h2>
+                    
+                    <form id="expense-form" class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="amount" class="block text-sm font-medium text-gray-700">Amount</label>
+                                <input type="number" id="amount" name="amount" required class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500" placeholder="0.00" step="0.01" />
+                            </div>
+                            <div>
+                                <label for="currency" class="block text-sm font-medium text-gray-700">Currency</label>
+                                <select id="currency" name="currency" required class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500">
+                                    <option>USD</option>
+                                    <option>INR</option>
+                                    <option>EUR</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="category" class="block text-sm font-medium text-gray-700">Category</label>
+                            <select id="category" name="category" required class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500">
+                                <option>Travel</option>
+                                <option>Meals</option>
+                                <option>Office Supplies</option>
+                                <option>Software</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="expense_date" class="block text-sm font-medium text-gray-700">Expense Date</label>
+                            <input type="date" id="expense_date" name="expense_date" required class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500" />
+                        </div>
+                        <div>
+                            <label for="description" class="block text-sm font-medium text-gray-700">Description</label>
+                            <textarea id="description" name="description" rows="3" required class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500" placeholder="Brief explanation of the expense"></textarea>
+                        </div>
+                        <div id="form-error" class="text-red-500 text-sm text-center"></div>
+                        <button type="submit" class="w-full py-3 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition">
+                            Submit Expense
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="content-history" class="tab-content-item hidden">
+                <div class="p-4 space-y-4">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Your Expense History</h2>
+                    <div class="bg-white shadow-xl rounded-2xl overflow-hidden">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-table-body" class="bg-white divide-y divide-gray-200">
+                                <tr><td colspan="4" class="text-center p-4">Loading history...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    const token = localStorage.getItem('accessToken');
+
+    function setActiveTab(tabName) {
+        document.querySelectorAll('.max-w-4xl button').forEach(btn => {
+            btn.classList.remove('border-purple-600', 'text-purple-600');
+            btn.classList.add('border-transparent', 'text-gray-500', 'hover:text-gray-700');
+        });
+        document.querySelectorAll('.tab-content-item').forEach(el => el.classList.add('hidden'));
+        document.getElementById(`tab-${tabName}`).classList.add('border-purple-600', 'text-purple-600');
+        document.getElementById(`tab-${tabName}`).classList.remove('border-transparent', 'text-gray-500', 'hover:text-gray-700');
+        document.getElementById(`content-${tabName}`).classList.remove('hidden');
+    }
+
+    function handleAuthError() {
+        localStorage.removeItem('accessToken');
+        window.location.href = 'login.html';
+    }
+
+    async function fetchHistory() {
+        const response = await fetch('http://127.0.0.1:5000/api/expenses/my-history', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.status === 401) return handleAuthError();
+        if (!response.ok) throw new Error('Failed to fetch history.');
+        const expenses = await response.json();
+        renderHistoryTable(expenses);
+    }
+
+    function renderHistoryTable(expenses) {
+        const historyTableBody = document.getElementById('history-table-body');
+        historyTableBody.innerHTML = '';
+        if (expenses.length === 0) {
+            historyTableBody.innerHTML = `<tr><td colspan="4" class="text-center p-4">You have not submitted any expenses.</td></tr>`;
+            return;
+        }
+        const statusClasses = {
+            'Pending': 'bg-pending',
+            'Approved': 'bg-approved',
+            'Rejected': 'bg-rejected'
+        };
+        expenses.forEach(expense => {
+            const row = document.createElement('tr');
+            row.classList.add('hover:bg-gray-50');
+            const statusClass = statusClasses[expense.status] || 'bg-gray-100 text-gray-800';
+            row.innerHTML = `
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${new Date(expense.submitted_at).toLocaleDateString()}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${expense.category}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-right text-gray-900">${expense.amount} ${expense.currency}</td>
+                <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">${expense.status}</span></td>
+            `;
+            historyTableBody.appendChild(row);
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!token) return handleAuthError();
+        
+        // Set today's date in the date picker
+        document.getElementById('expense_date').valueAsDate = new Date();
+        
+        // Initial setup
+        fetchHistory();
+        setActiveTab('submit');
+
+        // Logout functionality
+        document.getElementById('logout-button').addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.removeItem('accessToken');
+            window.location.href = 'login.html';
+        });
+
+        // Handle form submission
+        const expenseForm = document.getElementById('expense-form');
+        const formErrorDiv = document.getElementById('form-error');
+        expenseForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            formErrorDiv.textContent = '';
+            
+            const formData = new FormData(expenseForm);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/api/expenses', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.status === 401) return handleAuthError();
+                const body = await response.json();
+
+                if (!response.ok) {
+                    formErrorDiv.textContent = body.message || 'Submission failed.';
+                } else {
+                    alert('Expense submitted successfully!');
+                    expenseForm.reset();
+                    document.getElementById('expense_date').valueAsDate = new Date();
+                    await fetchHistory();
+                    setActiveTab('history');
+                }
+            } catch (error) {
+                formErrorDiv.textContent = 'Could not connect to the server.';
+            }
+        });
+    });
+</script>
+</body>
+</html>

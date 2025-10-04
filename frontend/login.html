@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - ExpenseFlow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .container-card { max-width: 448px; }
+    </style>
+</head>
+<body class="font-sans bg-gray-100 min-h-screen flex items-center justify-center">
+
+    <div class="container-card w-full p-6">
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold text-purple-700">ExpenseFlow</h1>
+            <p class="text-gray-500 mt-2">Sign in to manage your expenses.</p>
+        </div>
+
+        <div class="bg-white shadow-2xl rounded-xl p-8 space-y-6 border border-gray-200">
+            <h2 class="text-xl font-semibold text-gray-800 border-b pb-3">User Login</h2>
+
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" id="email" name="email" required 
+                           class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-3 focus:border-purple-500 focus:ring-purple-500" 
+                           placeholder="your.name@company.com" />
+                </div>
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                    <input type="password" id="password" name="password" required 
+                           class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-3 focus:border-purple-500 focus:ring-purple-500" />
+                </div>
+                <div id="error-message" class="text-red-500 text-sm text-center"></div>
+                <button type="submit" class="w-full py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition shadow-lg mt-6">
+                    Log In
+                </button>
+            </form>
+
+            <p class="text-center text-sm text-gray-500 pt-4">
+                First time here? <a href="signup.html" class="text-purple-600 hover:text-purple-700 font-medium">Create your company account</a>
+            </p>
+        </div>
+    </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const loginForm = document.getElementById('login-form');
+        const errorMessageDiv = document.getElementById('error-message');
+
+        loginForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            errorMessageDiv.textContent = '';
+
+            const formData = new FormData(loginForm);
+            const data = Object.fromEntries(formData.entries());
+
+            fetch('http://127.0.0.1:5000/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            })
+            .then(response => response.json().then(body => ({ ok: response.ok, body })))
+            .then(({ ok, body }) => {
+                if (ok) {
+                    localStorage.setItem('accessToken', body.access_token);
+                    const roleFromServer = body.role.toLowerCase();
+                    localStorage.setItem('userRole', body.role);
+
+                    let destination = 'employee.html';
+                    if (roleFromServer === 'admin') {
+                        destination = 'admin.html';
+                    } else if (roleFromServer === 'manager' || roleFromServer === 'cfo') {
+                        destination = 'manager.html';
+                    }
+
+                    window.location.href = destination;
+                } else {
+                    errorMessageDiv.textContent = body.message || 'An unknown error occurred.';
+                }
+            })
+            .catch(error => {
+                console.error('Login error:', error);
+                errorMessageDiv.textContent = 'Could not connect to the server.';
+            });
+        });
+    });
+</script>
+
+</body>
+</html>

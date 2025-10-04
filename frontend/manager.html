@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manager Dashboard - ExpenseFlow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="font-sans bg-gray-50">
+    <div id="app">
+        <header class="bg-white shadow-md p-4 sticky top-0 z-20 flex justify-between items-center border-b border-gray-200">
+            <a href="#" onclick="setActiveTab('queue'); return false;" class="group">
+                <h1 class="text-2xl font-bold text-indigo-700 group-hover:text-indigo-900 transition">Manager Dashboard</h1>
+            </a>
+            <div class="flex items-center space-x-6">
+                <div id="user-info" class="text-sm text-gray-600 font-medium">Manager User: ...</div>
+                <a href="#" id="logout-button" class="text-sm text-red-500 hover:text-red-700 font-medium transition py-1 px-3 border border-red-300 rounded-lg">Logout</a>
+            </div>
+        </header>
+        
+        <div class="bg-white border-b sticky top-16 z-10 shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex">
+                <button onclick="setActiveTab('queue')" id="tab-queue" class="px-6 py-3 border-b-2 font-medium transition border-indigo-600 text-indigo-600">Approval Queue</button>
+                <button onclick="setActiveTab('team')" id="tab-team" class="px-6 py-3 border-b-2 font-medium transition border-transparent text-gray-500 hover:text-gray-700">Team Expenses</button>
+            </div>
+        </div>
+
+        <main class="p-8 max-w-7xl mx-auto">
+            <div id="content-queue" class="tab-content-item space-y-6">
+                <h2 id="queue-title" class="text-2xl font-semibold text-gray-800">Expenses Awaiting Your Approval (...)</h2>
+                <div id="approval-cards-container">
+                    <p>Loading pending approvals...</p>
+                </div>
+            </div>
+
+            <div id="content-team" class="tab-content-item hidden space-y-6">
+                <h2 class="text-2xl font-semibold text-gray-800">Full Team Expense Overview</h2>
+                <div class="bg-white shadow-xl rounded-2xl overflow-hidden">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="team-history-body" class="bg-white divide-y divide-gray-200">
+                            <tr><td colspan="5" class="text-center p-4">Loading team history...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    const token = localStorage.getItem('accessToken');
+
+    function handleAuthError() {
+        localStorage.removeItem('accessToken');
+        window.location.href = 'login.html';
+    }
+
+    async function fetchData(endpoint) {
+        const response = await fetch(`http://127.0.0.1:5000/api${endpoint}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.status === 401) return handleAuthError();
+        if (!response.ok) throw new Error(`Failed to fetch ${endpoint}`);
+        return await response.json();
+    }
+
+    function renderQueue(approvals) {
+        const container = document.getElementById('approval-cards-container');
+    document.getElementById('queue-title').textContent = `Expenses Awaiting Your Approval (${approvals.length})`;
+    container.innerHTML = '';
+    if (approvals.length === 0) {
+        container.innerHTML = '<p>The approval queue is empty.</p>';
+        return;
+    }
+    approvals.forEach(approval => {
+        const card = document.createElement('div');
+        card.className = "bg-white p-6 shadow-xl rounded-xl border-l-4 border-yellow-500 flex justify-between items-center hover:shadow-2xl transition";
+        
+        // --- THIS PART IS UPDATED ---
+        card.innerHTML = `
+            <div>
+                <p class="text-xl font-bold text-gray-900">${approval.amount} ${approval.currency}</p>
+                <p class="text-sm text-gray-500">Submitted by: <span class="font-medium text-gray-700">${approval.employee_name}</span> on ${new Date(approval.submitted_at).toLocaleDateString()}</p>
+                <p class="text-sm text-gray-500 mt-1">
+                    Category: ${approval.category} | Description: ${approval.description}
+                </p>
+            </div>
+            <div class="space-x-4">
+                <button data-id="${approval.approval_id}" class="approve-btn py-2 px-4 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition shadow-md">Approve</button>
+                <button data-id="${approval.approval_id}" class="reject-btn py-2 px-4 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition shadow-md">Reject</button>
+            </div>`;
+        // -----------------------------
+        container.appendChild(card);
+        });
+    }
+    
+    function renderTeamHistory(expenses) {
+        const tableBody = document.getElementById('team-history-body');
+        tableBody.innerHTML = '';
+        if (expenses.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="5" class="text-center p-4">No expenses found for your team.</td></tr>';
+            return;
+        }
+        expenses.forEach(exp => {
+            const row = document.createElement('tr');
+            row.className = 'hover:bg-gray-50';
+            row.innerHTML = `
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${exp.employee_email}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${exp.expense_date}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${exp.category}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-right text-gray-900">${exp.amount} ${exp.currency}</td>
+                <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full">${exp.status}</span></td>
+            `;
+            tableBody.appendChild(row);
+        });
+    }
+
+    async function handleApprovalAction(approvalId, action) {
+        const comments = action === 'reject' ? prompt('Please provide a reason for rejection:') : null;
+        if (action === 'reject' && !comments) return; // User cancelled prompt
+
+        const response = await fetch(`http://127.0.0.1:5000/api/approvals/${approvalId}/${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ comments })
+        });
+        if (response.status === 401) return handleAuthError();
+        if (!response.ok) {
+            alert(`Failed to ${action} expense.`);
+        } else {
+            alert(`Expense ${action}ed successfully.`);
+            fetchData('/approvals/pending').then(renderQueue); // Refresh the queue
+        }
+    }
+
+    async function setActiveTab(tabName) {
+        document.querySelectorAll('.max-w-7xl button').forEach(btn => btn.classList.remove('border-indigo-600', 'text-indigo-600'));
+        document.querySelectorAll('.tab-content-item').forEach(el => el.classList.add('hidden'));
+        document.getElementById(`tab-${tabName}`).classList.add('border-indigo-600', 'text-indigo-600');
+        document.getElementById(`content-${tabName}`).classList.remove('hidden');
+
+        if (tabName === 'queue') {
+            fetchData('/approvals/pending').then(renderQueue);
+        } else if (tabName === 'team') {
+            fetchData('/team/expenses').then(renderTeamHistory);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!token) return handleAuthError();
+        setActiveTab('queue'); // Load the default tab
+
+        document.getElementById('logout-button').addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.removeItem('accessToken');
+            window.location.href = 'login.html';
+        });
+
+        // Event delegation for approve/reject buttons
+        document.getElementById('approval-cards-container').addEventListener('click', (e) => {
+            if (e.target.classList.contains('approve-btn')) {
+                handleApprovalAction(e.target.dataset.id, 'approve');
+            } else if (e.target.classList.contains('reject-btn')) {
+                handleApprovalAction(e.target.dataset.id, 'reject');
+            }
+        });
+    });
+</script>
+</body>
+</html>

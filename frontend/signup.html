@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signup - ExpenseFlow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .container-card { max-width: 448px; }
+    </style>
+</head>
+<body class="font-sans bg-gray-100 min-h-screen flex items-center justify-center">
+
+    <div class="container-card w-full p-6">
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold text-purple-700">ExpenseFlow</h1>
+            <p class="text-gray-500 mt-2">Start your company's expense management.</p>
+        </div>
+
+        <div class="bg-white shadow-2xl rounded-xl p-8 space-y-6 border border-gray-200">
+            <h2 class="text-xl font-semibold text-gray-800 border-b pb-3">Create Company & Admin Account</h2>
+
+            <form id="signup-form" class="space-y-4">
+                
+                <div>
+                    <label for="company_name" class="block text-sm font-medium text-gray-700">Company Name</label>
+                    <input type="text" id="company_name" name="company_name" required 
+                           class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-3 focus:border-purple-500 focus:ring-purple-500" 
+                           placeholder="Your Company Inc." />
+                </div>
+                
+                <div>
+                    <label for="country" class="block text-sm font-medium text-gray-700">Country</label>
+                    <select id="country" name="country_code" required 
+                            class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-3 focus:border-purple-500 focus:ring-purple-500">
+                        <option value="">Loading countries...</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">The default currency will be set based on your selected country.</p>
+                </div>
+                
+                <h3 class="text-lg font-semibold pt-4 text-gray-800 border-t">Admin User Details</h3>
+
+                <div>
+                    <label for="email" class="block text-sm font-medium text-gray-700">Admin Email</label>
+                    <input type="email" id="email" name="email" required 
+                           class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-3 focus:border-purple-500 focus:ring-purple-500" 
+                           placeholder="admin@company.com" />
+                </div>
+
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                    <input type="password" id="password" name="password" required 
+                           class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-3 focus:border-purple-500 focus:ring-purple-500" />
+                </div>
+
+                <div id="error-message" class="text-red-500 text-sm text-center"></div>
+
+                <button type="submit" class="w-full py-3 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition shadow-lg mt-6">
+                    Sign Up & Create Company
+                </button>
+            </form>
+            
+            <p class="text-center text-sm text-gray-500 pt-4">
+                Already have an account? <a href="login.html" class="text-purple-600 hover:text-purple-700 font-medium">Log in here</a>
+            </p>
+        </div>
+    </div>
+
+<script>
+    // This function runs when the page is fully loaded
+    document.addEventListener('DOMContentLoaded', () => {
+        const countrySelect = document.getElementById('country');
+        const signupForm = document.getElementById('signup-form');
+        const errorMessageDiv = document.getElementById('error-message');
+
+        // 1. Fetch and populate the list of countries
+        fetch('https://restcountries.com/v3.1/all?fields=name,cca2')
+            .then(response => response.json())
+            .then(countries => {
+                // Sort countries alphabetically
+                countries.sort((a, b) => a.name.common.localeCompare(b.name.common));
+                
+                countrySelect.innerHTML = '<option value="">Select a Country</option>'; // Clear loading message
+                countries.forEach(country => {
+                    const option = document.createElement('option');
+                    option.value = country.cca2; // e.g., 'IN', 'US'
+                    option.textContent = country.name.common;
+                    countrySelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching countries:', error);
+                countrySelect.innerHTML = '<option value="">Could not load countries</option>';
+            });
+
+        // 2. Handle the form submission
+        signupForm.addEventListener('submit', (event) => {
+            event.preventDefault(); // Stop the default browser redirect
+            errorMessageDiv.textContent = ''; // Clear previous errors
+
+            const formData = new FormData(signupForm);
+            const data = Object.fromEntries(formData.entries());
+
+            // 3. Send the data to your backend API
+            fetch('http://127.0.0.1:5000/api/auth/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            })
+            .then(response => response.json().then(body => ({ ok: response.ok, body })))
+            .then(({ ok, body }) => {
+                if (ok) {
+                    // Success!
+                    alert('Admin account and company created! Redirecting to login.');
+                    window.location.href = 'login.html';
+                } else {
+                    // Handle errors from the backend
+                    errorMessageDiv.textContent = body.message || 'An unknown error occurred.';
+                }
+            })
+            .catch(error => {
+                console.error('Signup error:', error);
+                errorMessageDiv.textContent = 'Could not connect to the server.';
+            });
+        });
+    });
+</script>
+
+</body>
+</html>
