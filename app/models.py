@@ -96,3 +96,4 @@ class ExpenseApproval(db.Model):
     
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
+    step = db.relationship('ApprovalStep', backref='approvals')

@@ -228,3 +228,70 @@ def get_pending_approvals():
         })
 
     return jsonify(results)
+
+# ... (all your other routes are here) ...
+
+@bp.route('/approvals/<int:approval_id>/approve', methods=['POST'])
+@jwt_required()
+def approve_expense(approval_id):
+    # 1. Identify the manager
+    manager_id = int(get_jwt_identity())
+    manager = Users.query.get(manager_id)
+    if manager.role != 'Manager':
+        return jsonify({'message': 'Manager access required'}), 403
+
+    # 2. Find the specific approval record
+    approval = ExpenseApproval.query.get_or_404(approval_id)
+
+    # Security Check: Ensure this manager is authorized to approve this request
+    if approval.expense.employee.manager_id != manager.id:
+        return jsonify({'message': 'You are not authorized to approve this expense'}), 403
+
+    # 3. Update the current approval step
+    approval.status = 'Approved'
+    approval.approver_id = manager.id
+    approval.comments = request.json.get('comments')
+
+    # --- Core Workflow Logic ---
+    # 4. Check if there's a next step in the rule
+    current_step = approval.step
+    rule = current_step.rule
+    next_step = ApprovalStep.query.filter_by(rule_id=rule.id, step_number=current_step.step_number + 1).first()
+
+    if next_step:
+        # 5a. If there is a next step, create a new pending approval for it
+        new_approval = ExpenseApproval(
+            expense_id=approval.expense_id,
+            step_id=next_step.id,
+            status='Pending'
+        )
+        db.session.add(new_approval)
+    else:
+        # 5b. If this is the final step, approve the whole expense
+        approval.expense.status = 'Approved'
+
+    db.session.commit()
+    return jsonify({'message': 'Expense approved'})
+
+
+@bp.route('/approvals/<int:approval_id>/reject', methods=['POST'])
+@jwt_required()
+def reject_expense(approval_id):
+    # 1. Identify the manager and perform security checks
+    manager_id = int(get_jwt_identity())
+    manager = Users.query.get(manager_id)
+    if manager.role != 'Manager':
+        return jsonify({'message': 'Manager access required'}), 403
+
+    approval = ExpenseApproval.query.get_or_404(approval_id)
+    if approval.expense.employee.manager_id != manager.id:
+        return jsonify({'message': 'You are not authorized to reject this expense'}), 403
+    
+    # 2. Update records to rejected
+    approval.status = 'Rejected'
+    approval.approver_id = manager.id
+    approval.comments = request.json.get('comments')
+    approval.expense.status = 'Rejected' # Rejection stops the entire workflow
+
+    db.session.commit()
+    return jsonify({'message': 'Expense rejected'})
